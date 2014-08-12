@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""snpedia-23andme.py [23andMe-genome-file]
+"""./snpedia-23andme.py [23andMe-genome-file]
 
 Find health information from 23andMe's raw data.
 
@@ -12,12 +12,14 @@ sorted according to SNPedia's magnitude scale.
 
 import sys
 import csv
+import json
 import re
 import zipfile
 
 import pprint
 pp = pprint.PrettyPrinter(indent=4).pprint
 
+sys.path.append("wikitools") # Hack for using wikitools as a git submodule
 from wikitools import api, category, page, wiki
 
 def read_snpedia(string):
@@ -71,7 +73,19 @@ def switch_orientation(genotype):
                       "G": "C" }
     return "".join(map(substitutions.get, genotype))
 
+def test_and_store_genotype(snpinfo, rsid, genotype, matches=[]): # mutable matches list!
+    if snpinfo[rsid] and genotype in snpinfo[rsid]["genotypes"]:
+        snpmatch = dict(snpinfo[rsid])
+        snpmatch["rsid"] = rsid
+        snpmatch["genotype"] = genotype
+        snpmatch["magnitude"] = snpmatch["genotypes"][genotype]["magnitude"]
+        snpmatch["link"] = "http://www.snpedia.com/index.php/" + rsid.capitalize()
+        matches.append(snpmatch)
+    return matches
 
+def puts(s):
+    sys.stdout.write(s)
+    sys.stdout.flush()
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
@@ -80,60 +94,93 @@ if __name__ == "__main__":
 
     with open(sys.argv[1], 'r') as genomefile, \
             zipfile.ZipFile("snpedia-archive.zip", mode="a",
-                            compression=zipfile.ZIP_DEFLATED) as archive:
+                            compression=zipfile.ZIP_DEFLATED) as ziparchive:
         site = wiki.Wiki("http://bots.snpedia.com/api.php")
         snpsfile = csv.DictReader(genomefile, delimiter="\t",
                               fieldnames=["rsid", "chromosome",
                                           "position", "genotype"])
 
-        if "snpedia_rsids" in archive.namelist():
-            snpedia_rsids = [line.rstrip() for line in archive.read("snpedia_rsids")]
+        if "snpedia_rsids" in ziparchive.namelist():
+            snpedia_rsids = {line.rstrip() for line in ziparchive.read("snpedia_rsids")}
         else:
-            sys.stdout.write("Get list of SNPs on SNPedia ... ")
-            sys.stdout.flush()
+            puts("Get list of SNPs on SNPedia ... ")
             snps = category.Category(site, "Is_a_snp")
-            snpedia_rsids = [article.title.lower()
-                             for article in snps.getAllMembersGen(namespaces=[0])]
-            snpedia_rsids.sort()
-            archive.writestr("snpedia_rsids", "\n".join(snpedia_rsids))
-            sys.stdout.write("done\n")
-        ##pp(snpedia_snp)
-        # rsid = "rs11614913"
-        # pp(read_snpedia(archive.read(rsid)))
+            snpedia_rsids = {article.title.lower()
+                             for article in snps.getAllMembersGen(namespaces=[0])}
+            ziparchive.writestr("snpedia_rsids", "\n".join(sorted(snpedia_rsids)))
+            puts("done\n")
 
-        namelist = set(archive.namelist())
-        matches = []
+        try:
+            with open("snpedia-archive.json", "r") as snpinfofile:
+                snpinfo = json.load(snpinfofile)
+        except (IOError, ValueError):
+            snpinfo = {}
 
+        namelist = set(ziparchive.namelist())
+
+        counter = 0
+        puts("  ")
         for snp in snpsfile:
             rsid = snp["rsid"]
             if rsid[0] == "#":
                 # skip comments
                 continue
-            #pp(snp)
 
-            if rsid in namelist:
-                #pass
-                sys.stdout.write("SNP " + rsid + " present in zip file\n")
-                sys.stdout.flush()
-            elif rsid in snpedia_rsids:
-                sys.stdout.write("Query SNP " + rsid + " ... ")
-                sys.stdout.flush()
-                pagehandle = page.Page(site, rsid)
-                archive.writestr(rsid, pagehandle.getWikiText(expandtemplates=True))
-                sys.stdout.write("done.\n")
-            else:
-                continue
-                #sys.stdout.write("SNP " + rsid + " not on SNPedia.\n")
+            counter += 1
+            if counter % 10000 == 0:
+                puts(" %6i\n  " % counter)
+            elif counter % 500 == 0:
+                puts(" ")
+            elif counter % 100 == 0:
+                puts(".")
 
-            snp_info = read_snpedia(archive.read(rsid))
-            if not "max_magnitude" in snp_info:
-                continue
-
-            pp(snp_info)
             genotype = snp["genotype"]
-            if genotype in snp_info["genotypes"]:
-                matches.append(snp_info["genotypes"][genotype])
 
-        print "Sorted matched genotypes:"
+            # Check json file first
+            if rsid in snpinfo:
+                #print "SNP", rsid, "present in json file"
+                matches = test_and_store_genotype(snpinfo, rsid, genotype)
+                continue
+
+            # If not found there, check zip file or snpedia.com
+            if rsid in namelist:
+                pass
+                #puts("SNP " + rsid + " present in zip file\n")
+            elif rsid in snpedia_rsids:
+                puts("Query SNPedia for " + rsid + " ... ")
+                pagehandle = page.Page(site, rsid)
+                ziparchive.writestr(rsid, pagehandle.getWikiText(expandtemplates=True))
+                puts("done.\n")
+            else:
+                #puts("SNP " + rsid + " not on SNPedia.\n")
+                continue
+
+            # If we made it here, the zip file has some information
+            snpinfo[rsid] = read_snpedia(ziparchive.read(rsid))
+            if not snpinfo[rsid]:
+                continue
+
+            matches = test_and_store_genotype(snpinfo, rsid, genotype)
+
+        puts(" %6i\n" % counter)
+
         matches.sort(key=lambda g: g["magnitude"], reverse=True)
-        pp(matches)
+
+        with open(sys.argv[1] + ".json", "w") as resultfile:
+            json.dump(matches, resultfile, indent=2, separators=(',', ': '))
+
+        # with open(sys.argv[1] + ".csv", "w") as resultfile:
+        #     writer = csv.writer(resultfile)
+        #     writer.writerow(["magnitude", "comment", "genotype", "rsid", "link"])
+        #     for match in matches:
+        #         genotype_info = match["genotypes"][match["genotype"]]
+        #         writer.writerow([
+        #                 match["magnitude"],
+        #                 genotype_info["comment"],
+        #                 match["genotype"],
+        #                 match["rsid"],
+        #                 "http://www.snpedia.com/index.php/" + match["rsid"].capitalize()])
+        # print "Wrote output to " + sys.argv[1] + ".csv"
+
+        with open("snpedia-archive.json", "w") as snpinfofile:
+            json.dump(snpinfo, snpinfofile, indent=2, separators=(',', ': '))
