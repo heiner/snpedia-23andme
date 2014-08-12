@@ -29,7 +29,7 @@ def read_snpedia(string):
         return {}
     orientation = match.group(1)
 
-    match = re.search(r"\[\[Max Magnitude::(\d+)\]\]", string)
+    match = re.search(r"\[\[Max Magnitude::(.+?)\]\]", string)
     if not match:
         return {}
     max_magnitude = float(match.group(1))
@@ -42,7 +42,7 @@ def read_snpedia(string):
     while True:
         match = re.match(r"""
 \| \s* \[\[(?P<variant>\w+\([ATCG];?[ATCG]\)) \| (?P<genotype>[^\]]*)\]\] \s*
-\| (?:\s*\w+=\"[^\"]*\")* \s* \| \s* (?P<magnitude>[\d.]*) \s*
+\| (?:\s*\w+=\"[^\"]*\")* \s* \| \s* (?P<magnitude>[^\|]*) \s*
 \| (?P<comment>.*?)
 \|-\s*""", string, re.MULTILINE | re.VERBOSE | re.DOTALL)
         if not match:
@@ -181,13 +181,14 @@ if __name__ == "__main__":
                     ["magnitude", "comment", "genotype", "rsid", "link"]) + "\n")
             for match in matches:
                 genotype_info = match["genotypes"][match["genotype"]]
-                tsvresultfile.write("\t".join(
-                        [str(match["magnitude"]),
-                         genotype_info["comment"],
-                         match["genotype"],
-                         match["rsid"],
-                         "http://www.snpedia.com/index.php/" + \
-                             match["rsid"].capitalize()]).encode('utf-8') + "\n")
+                line = "\t".join(
+                    [str(match["magnitude"]),
+                     unicode(genotype_info["comment"]),
+                     match["genotype"],
+                     match["rsid"],
+                     "http://www.snpedia.com/index.php/" + \
+                         match["rsid"].capitalize()]) + "\n"
+                tsvresultfile.write(line.encode("utf-8"))
 
         with open("snpedia-archive.json", "w") as snpinfofile:
             json.dump(snpinfo, snpinfofile, indent=2,
