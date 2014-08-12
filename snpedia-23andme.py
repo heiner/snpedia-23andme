@@ -166,21 +166,29 @@ if __name__ == "__main__":
 
         matches.sort(key=lambda g: g["magnitude"], reverse=True)
 
-        with open(sys.argv[1] + ".json", "w") as resultfile:
-            json.dump(matches, resultfile, indent=2, separators=(',', ': '))
+        m = re.match(r"(.+)\..{1,4}$", sys.argv[1])
+        if m:
+            outfilebasename = m.group(1)
+        else:
+            outfilebasename = sys.argv[1]
 
-        # with open(sys.argv[1] + ".csv", "w") as resultfile:
-        #     writer = csv.writer(resultfile)
-        #     writer.writerow(["magnitude", "comment", "genotype", "rsid", "link"])
-        #     for match in matches:
-        #         genotype_info = match["genotypes"][match["genotype"]]
-        #         writer.writerow([
-        #                 match["magnitude"],
-        #                 genotype_info["comment"],
-        #                 match["genotype"],
-        #                 match["rsid"],
-        #                 "http://www.snpedia.com/index.php/" + match["rsid"].capitalize()])
-        # print "Wrote output to " + sys.argv[1] + ".csv"
+        with open(outfilebasename + "_snpedia.json", "w") as jsonresultfile:
+            json.dump(matches, jsonresultfile, indent=2, separators=(',', ': '))
+
+        with open(outfilebasename + "_snpedia.tsv", "w") as tsvresultfile:
+            # csv writer sucks for Unicode strings
+            tsvresultfile.write("# " + "\t".join(
+                    ["magnitude", "comment", "genotype", "rsid", "link"]) + "\n")
+            for match in matches:
+                genotype_info = match["genotypes"][match["genotype"]]
+                tsvresultfile.write("\t".join(
+                        [str(match["magnitude"]),
+                         genotype_info["comment"],
+                         match["genotype"],
+                         match["rsid"],
+                         "http://www.snpedia.com/index.php/" + \
+                             match["rsid"].capitalize()]).encode('utf-8') + "\n")
 
         with open("snpedia-archive.json", "w") as snpinfofile:
-            json.dump(snpinfo, snpinfofile, indent=2, separators=(',', ': '))
+            json.dump(snpinfo, snpinfofile, indent=2,
+                      separators=(',', ': '), sort_keys=True)

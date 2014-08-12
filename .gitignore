@@ -1,3 +1,5 @@
 *~
 genome_*.txt
 snpedia-archive.zip
+*.tsv
+*.json
